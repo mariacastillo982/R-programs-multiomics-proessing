@@ -192,158 +192,94 @@ write.csv(exprs, file = "filtered_normalized_exprs.csv",row.names = TRUE, col.na
 #remove outlier
 #palmieri_final=palmieri_final[,palmieri_final@phenoData@data$File.name!="200-18-000110.CEL"]
 
+# Function to aggregate strings or calculate mean for non-characters
 aggregate_strings <- function(x) {
   if (is.character(x)) {
-    if (length(x) > 1) {
-      return(x[1])
-    } else {
-      return(x)
-    }
+    return(ifelse(length(x) > 1, x[1], x))
   } else {
     return(mean(x))
   }
 }
 
-palmieri_final_ <- palmieri_final[ ,palmieri_final@phenoData@data$"Time.point"=="Control" | palmieri_final@phenoData@data$"Time.point"=="Heat Stroke T1"| palmieri_final@phenoData@data$"Time.point"=="Heat Stroke T0"]
-Subject=factor(palmieri_final_@phenoData@data$Group.number)
-gs <- factor(palmieri_final_@phenoData@data$Time.point)
-gender= factor(palmieri_final_@phenoData@data$Gender)
-age=factor(palmieri_final_@phenoData@data$Age.category)
-batch=factor(palmieri_final_@phenoData@data$Batch)
-groups <-make.names(c("Stress","T1","T0"))
-levels(gs) <- groups
-palmieri_final_$group <- gs
+# Filter the palmieri_final_ data based on specific time points
+filtered_data <- palmieri_final[, palmieri_final@phenoData@data$"Time.point" %in% c("Control", "Heat Stroke T1", "Heat Stroke T0")]
+Subject <- factor(filtered_data@phenoData@data$Group.number)
+gs <- factor(filtered_data@phenoData@data$Time.point)
+gender <- factor(filtered_data@phenoData@data$Gender)
+age <- factor(filtered_data@phenoData@data$Age.category)
+batch <- factor(filtered_data@phenoData@data$Batch)
 
-design2<- model.matrix(~0+gs+age+gender)
-rownames(design2)=palmieri_final_@phenoData@data$Time.point
-colnames(design2)[1:3] <- c("Stress","T0","T1")
-norm_cpn <- removeBatchEffect(palmieri_final_, batch=batch, design = design2) 
-rownames(norm_cpn)=palmieri_final_@featureData@data$SYMBOL
+# Assign levels to gs and update palmieri_final_ with group
+levels(gs) <- make.names(c("Stress", "T1", "T0"))
+filtered_data$group <- gs
 
-# fit linear model
-fit <- lmFit(norm_cpn, design)  
-cont.matrix <- makeContrasts(contrasts=c("T0"), levels=design2)
-fit2 <- contrasts.fit(fit, cont.matrix)
+# Design matrix for linear model
+design_matrix <- model.matrix(~0 + gs + age + gender)
+rownames(design_matrix) <- filtered_data@phenoData@data$Time.point
+colnames(design_matrix)[1:3] <- c("Stress", "T0", "T1")
 
-# compute statistics and table of top significant genes
-fit2 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
+# Remove batch effects
+norm_cpn <- removeBatchEffect(filtered_data, batch = batch, design = design_matrix)
+rownames(norm_cpn) <- filtered_data@featureData@data$SYMBOL
 
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit2, adjust="BH", sort.by="B", p.value=0.05,number=Inf)
-top_genes=na.omit(top_genes)
-colnames(top_genes)[1]="SYMBOL"
-top_genes_mean_table_T0 <- aggregate(. ~ SYMBOL, data = top_genes, FUN = aggregate_strings)
-top_genes_mean_table_T0=top_genes_mean_table
-write.csv(top_genes_mean_table_T0, "top_genes_Stress_T0_adj_Batch_limma_remove_outlier.csv")
+# Function to analyze differential expression for a specific contrast
+analyze_contrast <- function(design, contrast, filename_prefix) {
+  # Fit linear model and compute statistics
+  fit <- lmFit(norm_cpn, design)
+  cont.matrix <- makeContrasts(contrasts = contrast, levels = design)
+  fit2 <- contrasts.fit(fit, cont.matrix)
+  fit2 <- eBayes(fit2, 0.01)
+  
+  # Top table and aggregation
+  top_genes <- topTable(fit2, adjust = "BH", sort.by = "B", p.value = 0.05, number = Inf)
+  top_genes <- na.omit(top_genes)
+  colnames(top_genes)[1] <- "SYMBOL"
+  top_genes_mean_table <- aggregate(. ~ SYMBOL, data = top_genes, FUN = aggregate_strings)
+  write.csv(top_genes_mean_table, paste0(filename_prefix, "_top_genes.csv"))
+  
+  # Add ENTREZ IDs
+  gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = top_genes_mean_table$SYMBOL, columns = "ENTREZID", keytype = "SYMBOL")
+  gene_list <- merge(top_genes_mean_table, gene_ids, by = "SYMBOL", all = TRUE)
+  write.csv(gene_list, paste0(filename_prefix, "_gene_list.csv"))
+  
+  # Compare with reference genes
+  Ref <- read_excel("Heat_stroke_genes.xlsx")
+  merged_table <- merge(Ref, top_genes_mean_table, by = "SYMBOL")
+  write.csv(merged_table, paste0(filename_prefix, "_shared_genes.csv"))
+  
+  # Plot volcano plot
+  top_genes_mean_table$logFC <- as.numeric(unlist(top_genes_mean_table$logFC))
+  top_genes_mean_table$adj.P.Val <- as.numeric(unlist(top_genes_mean_table$adj.P.Val))
+  EnhancedVolcano(top_genes_mean_table,
+                  lab = top_genes_mean_table$SYMBOL,
+                  x = 'logFC',
+                  y = 'adj.P.Val',
+                  title = paste('Control vs', contrast),
+                  pCutoff = 0.05,
+                  FCcutoff = 1,
+                  pointSize = 1.0)
+  dev.copy(jpeg, filename = paste0("Volcano_", filename_prefix, ".jpg"))
+  dev.off()
+  
+  # Enrichment analysis
+  OrgDb <- 'org.Hs.eg.db'
+  ego <- enrichGO(gene_ids$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+  barplot(ego, showCategory = 20)
+  dev.copy(jpeg, filename = paste0("Barplot_", filename_prefix, ".jpg"))
+  dev.off()
+  
+  return(top_genes_mean_table)
+}
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = top_genes_mean_table_T0$SYMBOL, columns = "ENTREZID", keytype = "SYMBOL")
-gene_list <- merge(top_genes_mean_table_T0, gene_ids, by = "SYMBOL", all = TRUE)
+# Analyze for T0
+top_genes_T0 <- analyze_contrast(design_matrix, "T0", "Stress_T0_adj_batch_limma")
 
-Ref <- read_excel("Hest_stroke_genes.xlsx")
-write.csv(gene_list, "top_genes_Stress_T0_adj_batch_limma_remove_outlier.csv")
-int=list(intersect(Ref$SYMBOL, top_genes_mean_table_T0$SYMBOL))
-merged_table <- data.frame(merge(Ref, top_genes_mean_table_T0, by = "SYMBOL"))
-write.csv(merged_table, "Shared_genes_Stress_T0_adj_bath_limma_remove_outlier.csv")
+# Analyze for T1
+top_genes_T1 <- analyze_contrast(design_matrix, "T1", "Stress_T1_adj_batch_limma")
 
-top_genes <- topTable(fit2, adjust="BH", sort.by="B",number=Inf)
-top_genes=na.omit(top_genes)
-colnames(top_genes)[1]="SYMBOL"
-top_genes_mean_table <- aggregate(. ~ SYMBOL, data = top_genes, FUN = aggregate_strings)
-
-merged_table$logFC=as.numeric(unlist(merged_table$logFC))
-merged_table$adj.P.Val=as.numeric(unlist(merged_table$adj.P.Val))
-top_genes_mean_table$logFC=as.numeric(unlist(top_genes_mean_table$logFC))
-top_genes_mean_table$adj.P.Val=as.numeric(unlist(top_genes_mean_table$adj.P.Val))
-
-EnhancedVolcano(top_genes_mean_table,
-                lab = top_genes_mean_table$SYMBOL,
-                x = 'logFC',
-                y = 'adj.P.Val',
-                title = 'Female subjets: Control- Heat Stroke T0',
-                pCutoff = 0.05,
-                FCcutoff = 1,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="Volcano_Stress_T0_adj_bath_limma_remove_outlier.jpg");
-dev.off ();
-
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_ids$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-
-ego_df <- as.data.frame(ego)
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=20) 
-
-dev.copy(jpeg,filename="Barplot_Stress_T0_adj_batch_limma_remove_outlier.jpg");
-dev.off ();
-
-#__________________T1
-cont.matrix <- makeContrasts(contrasts=c("T1"), levels=design2)
-fit2 <- contrasts.fit(fit, cont.matrix)
-
-# compute statistics and table of top significant genes
-fit2 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit2, adjust="BH", sort.by="B", p.value=0.05,number=Inf)
-top_genes=na.omit(top_genes)
-colnames(top_genes)[1]="SYMBOL"
-top_genes_mean_table_T1 <- aggregate(. ~ SYMBOL, data = top_genes, FUN = aggregate_strings)
-write.csv(top_genes_mean_table_T1, "top_genes_Stress_T1_adj_Batch_limma_remove_outlier.csv")
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = top_genes_mean_table_T1$SYMBOL, columns = "ENTREZID", keytype = "SYMBOL")
-gene_list <- merge(top_genes_mean_table_T1, gene_ids, by = "SYMBOL", all = TRUE)
-
-Ref <- read_excel("Hest_stroke_genes.xlsx")
-write.csv(gene_list, "top_genes_Stress_T1_adj_batch_limma_remove_outlier.csv")
-int=list(intersect(Ref$SYMBOL, top_genes_mean_table_T1$SYMBOL))
-merged_table <- data.frame(merge(Ref, top_genes_mean_table_T1, by = "SYMBOL"))
-write.csv(merged_table, "Shared_genes_Stress_T1_adj_batch_limma_remove_outlier.csv")
-
-top_genes <- topTable(fit2, adjust="BH", sort.by="B", number=Inf)
-top_genes=na.omit(top_genes)
-colnames(top_genes)[1]="SYMBOL"
-top_genes_mean_table <- aggregate(. ~ SYMBOL, data = top_genes, FUN = aggregate_strings)
-
-merged_table$logFC=as.numeric(unlist(merged_table$logFC))
-merged_table$adj.P.Val=as.numeric(unlist(merged_table$adj.P.Val))
-top_genes_mean_table$logFC=as.numeric(unlist(top_genes_mean_table$logFC))
-top_genes_mean_table$adj.P.Val=as.numeric(unlist(top_genes_mean_table$adj.P.Val))
-
-EnhancedVolcano(top_genes_mean_table,
-                lab = top_genes_mean_table$SYMBOL,
-                x = 'logFC',
-                y = 'adj.P.Val',
-                title = 'Female subjets: Control- Heat Stroke T1',
-                pCutoff = 0.05,
-                FCcutoff = 1,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="Volcano_Stress_T1_adj_batch_limma_remove_outlier.jpg");
-dev.off ();
-
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_ids$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-
-ego_df <- as.data.frame(ego)
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-
-dev.copy(jpeg,filename="Barplot_Stress_T1_adj_batch_limma_remove_outlier.jpg");
-dev.off ();
-
-# Print the Venn diagram
-
-a <- list('DE T0' = top_genes_mean_table_T0$SYMBOL,
-          'DE T1' = top_genes_mean_table_t1$SYMBOL)
-venn <- ggvenn(a)
-# Add a title to the Venn diagram
-venn <- venn + ggtitle("DE Genes")
+# Venn diagram of shared genes
+venn_data <- list('DE T0' = top_genes_T0$SYMBOL, 'DE T1' = top_genes_T1$SYMBOL)
+venn <- ggvenn(venn_data) + ggtitle("Shared DE Genes between T0 and T1")
 print(venn)
-dev.copy(jpeg,filename="DE_genes_T0_T1.jpg");
-dev.off ();
-a=1
-
-
+dev.copy(jpeg, filename = "DE_genes_T0_T1.jpg");
+dev.off();
