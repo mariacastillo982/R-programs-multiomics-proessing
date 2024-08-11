@@ -22,7 +22,8 @@ library(SummarizedExperiment)
 library(vsn)
 
 # PROTEINS
-setwd("/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/PBMC_1st_Injection_DIANN_results20072023/")
+path_proteomics="path/HEATSTROKE/DATA CEL FILES/"
+setwd(path_proteomics)
 
 meta <- read_excel("metadata.xlsx")
 data<-readr::read_tsv("report.pg_matrix.tsv")
@@ -52,394 +53,182 @@ x1=str_replace_all(x," ", "_")
 x1=str_replace_all(x1,"-", "_")
 cond = as.factor(x1)
 
-## ----log2transform1-----------------------------------------------------------
-dat.log = log2(dat)
-# Create a logical vector indicating which rows have NAs
-na_rows = rowSums(is.na(dat.log)) > 0
-#remove rows with NAs
-dat.log = na.omit(dat.log)
-protein_group_filtered = data$Protein.Group[!na_rows]
-rownames(dat.log)=protein_group_filtered
+process_proteomics_data <- function(dat, meta, output_dir) {
+  ## ----log2transform1-----------------------------------------------------------
+  # Log2 transform the data
+  dat.log <- log2(dat)
+  
+  # Remove rows with NAs
+  na_rows <- rowSums(is.na(dat.log)) > 0
+  dat.log <- na.omit(dat.log)
+  protein_group_filtered <- data$Genes[!na_rows]
+  rownames(dat.log) <- protein_group_filtered
 
-## ----boxplot1-----------------------------------------------------------------
-boxplot(dat.log,las=2,main="Original Cellular proteomic data: Proteins")
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Barplot_before_Normalization_Proteins.jpg");
-dev.off ();
+  ## ----boxplot1-----------------------------------------------------------------
+  # Plot before normalization
+  boxplot(dat.log, las=2, main="Cellular proteomic data: Genes")
+  dev.copy(jpeg, filename=file.path(output_dir, "Barplot_before_Normalization_Genes.jpg"))
+  dev.off()
+  
+  # Normalize the data (assuming equalMedianNormalization is defined)
+  dat.log <- equalMedianNormalization(dat.log)
+  
+  # Plot after normalization
+  boxplot(dat.log, las=2, main="Cellular proteomic data: Normalized")
+  dev.copy(jpeg, filename=file.path(output_dir, "Barplot_after_Normalization_Genes.jpg"))
+  dev.off()
+  
+  return(dat.log)
+}
+
+dat.log <- process_proteomics_data(dat, meta, "/path/to/output/directory")
+
+# Define file paths
+output_dir <- "path/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/"
+age_dir <- "path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/"
+gender_dir <- "path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/"
 
 # Identify the index of the reference protein in the data frame
 reference_index <- which(rownames(dat.log) == 'P04406')
-# Normalize each row by dividing it by the values of the reference row
-vec=dat.log[reference_index,]
-normalized_data=mapply('/', dat.log, vec)
-rownames(normalized_data)=rownames(dat.log)
-normalized_data=data.frame(normalized_data)
-write.csv(normalized_data, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/normalized_data_HKG.csv")
 
-boxplot(normalized_data,las=2,main="Normalization Housekeeping gene")
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Barplot_Normalization_Proteins_HKG.jpg");
-dev.off ();
+# Normalize by the reference protein
+normalized_data <- sweep(dat.log, 2, dat.log[reference_index, ], '/')
+normalized_data <- as.data.frame(normalized_data)
+write.csv(normalized_data, file.path(output_dir, "normalized_data_HKG.csv"))
 
-#dat.log <- as.matrix(dat.log)  # Ensure dat.log is a matrix
-#colData <- DataFrame(meta)  # Create sample annotations from meta data frame
-#se <- SummarizedExperiment(assays = list(counts = dat.log), colData = colData)
-dat.log = equalMedianNormalization(dat.log)
-#dat.log = normalize_vsn(se)
-boxplot(dat.log,las=2,main="VSN Normalization: Proteins")
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Barplot_after_Normalization_Proteins.jpg");
-dev.off ();
-#write.csv(dat.log, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/normalized_data_Standard_Deviation.csv")
+# Boxplot after normalization
+boxplot(normalized_data, las=2, main="Normalization Housekeeping gene")
+ggsave(filename=file.path(output_dir, "Barplot_Normalization_Proteins_HKG.jpg"))
 
-## ----AGE-GENDER---------------------------------------------------------------
+# VSN Normalization
+dat.log <- equalMedianNormalization(dat.log)
+boxplot(dat.log, las=2, main="VSN Normalization: Proteins")
+ggsave(filename=file.path(output_dir, "Barplot_after_Normalization_Proteins.jpg"))
 
-dat_Old = dat.log[,as.character(meta_Old$`Sample ID`)]
-dat_Young = dat.log[,as.character(meta_Young$`Sample ID`)]
-
-dat_Male = dat.log[,as.character(meta_Male$`Sample ID`)]
-dat_Female = dat.log[,as.character(meta_Female$`Sample ID`)]
-
-value=as.numeric(unlist(dat.log))
-qqnorm(value,pch = 1, frame = FALSE)
+# Q-Q plot
+value <- as.numeric(unlist(dat.log))
+qqnorm(value, pch = 1, frame = FALSE)
 qqline(value, col = "steelblue", lwd = 2)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Q-Q plot Proteins.jpg");
-dev.off ();
+ggsave(filename=file.path(output_dir, "Q-Q_plot_Proteins.jpg"))
 
+# PCA Plotting Function
+plot_pca <- function(data, group_col, title_suffix, file_path, x_pc=1, y_pc=2) {
+  PCA_raw <- prcomp(t(data), scale. = FALSE)
+  percentVar <- round(100 * PCA_raw$sdev^2 / sum(PCA_raw$sdev^2), 1)
+  sd_ratio <- sqrt(percentVar[y_pc] / percentVar[x_pc])
+  
+  dataGG <- data.frame(PC1 = PCA_raw$x[, x_pc], PC2 = PCA_raw$x[, y_pc], group = group_col)
+  dataGG_clean <- dataGG %>%
+    drop_na() %>%
+    group_by(group) %>%
+    dplyr::slice(chull(PC1, PC2))
 
-## -------------PCA-------------------------------------------------------------
+  ggplot(dataGG) +
+    aes_string(x = paste0("PC", x_pc), y = paste0("PC", y_pc), color = 'group') +
+    geom_point(aes(shape = group)) +
+    geom_polygon(data = dataGG_clean,
+                 aes(fill = group, color = NULL),
+                 alpha = 0.3,
+                 show.legend = TRUE) +
+    xlab(paste0("PC", x_pc, ", VarExp: ", percentVar[x_pc], "%")) +
+    ylab(paste0("PC", y_pc, ", VarExp: ", percentVar[y_pc], "%")) +
+    ggtitle(paste("PCA: Proteins -", title_suffix)) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    coord_fixed(ratio = sd_ratio)
+  
+  ggsave(filename=file_path)
+}
 
-PCA_raw <- prcomp(t(dat.log), scale. = FALSE)
-percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
-sd_ratio <- sqrt(percentVar[2] / percentVar[1])
-dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2], PC3 = PCA_raw$x[,3],
-                     Disease = gs)
+# PCA Plots
+plot_pca(dat.log, gs, "Disease (PC1 vs PC2)", file.path(output_dir, "PCA_Proteins_PC1_PC2_Disease.jpg"))
+plot_pca(dat.log, age, "Age (PC2 vs PC3)", file.path(age_dir, "PCA_Proteins_PC2_PC3_Age.jpg"))
+plot_pca(dat.log, gender, "Gender (PC1 vs PC2)", file.path(gender_dir, "PCA_Proteins_PC1_PC2_Gender.jpg"))
 
-dataGG_clean <- dataGG %>%
-  drop_na() %>%
-  group_by(Disease) %>%
-  dplyr::slice(chull(PC1, PC2))  # Calculate the convex hull for each group
+## ----Design-------------------------------------------------------------------
+# Clean up the condition names
+meta$condition <- gsub("[ -]", "_", meta$condition)
 
-ggplot(dataGG) +
-  aes(x = PC1, y = PC2, color = Disease) +  # Color by Disease
-  geom_polygon(data = dataGG_clean,
-               aes(fill = Disease, color = NULL),  # Remove color mapping from geom_polygon
-               alpha = 0.3,
-               show.legend = TRUE) +
-  xlab(paste0("PC1, VarExp: ", percentVar[1], "%")) +  # Assuming percentVar is defined
-  ylab(paste0("PC2, VarExp: ", percentVar[2], "%")) +  # Assuming percentVar is defined
-  theme(plot.title = element_text(hjust = 0.5)) +
-  coord_fixed(ratio = sd_ratio)# Assuming sd_ratio is defined
+# Create a design matrix
+groups <- make.names(c("Stress", "T1", "T0"))
+meta$group <- factor(meta$condition, levels = groups)
+design <- model.matrix(~ group + gender + age, data = meta)
+colnames(design) <- gsub("group", "", colnames(design))
+colnames(design)[1:3] <- c("Stress", "T1", "T0")
 
-dev.copy(jpeg, filename = "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/PCA_Proteins_PC1_PC2_Disease.jpg")
-dev.off()
-
-dataGG_clean <- dataGG %>%
-  drop_na() %>%
-  group_by(Disease) %>%
-  dplyr::slice(chull(PC2, PC3))  # Calculate the convex hull for each group
-
-ggplot(dataGG) +
-  aes(x = PC2, y = PC3, color = Disease) +  # Color by Disease
-  geom_point(aes(shape = Disease)) +
-  geom_polygon(data = dataGG_clean,
-               aes(fill = Disease, color = NULL),  # Remove color mapping from geom_polygon
-               alpha = 0.3,
-               show.legend = TRUE) +
-  xlab(paste0("PC2, VarExp: ", percentVar[2], "%")) +  # Assuming percentVar is defined
-  ylab(paste0("PC3, VarExp: ", percentVar[3], "%")) +  # Assuming percentVar is defined
-  theme(plot.title = element_text(hjust = 0.5)) +
-  coord_fixed(ratio = sd_ratio)# Assuming sd_ratio is defined
-
-dev.copy(jpeg, filename = "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/PCA_Proteins_PC2_PC3_Disease.jpg")
-dev.off()
-
-#PCA_AGE
-
-PCA_raw <- prcomp(t(dat.log), scale. = FALSE)
-percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
-sd_ratio <- sqrt(percentVar[2] / percentVar[1])
-dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2], PC3 = PCA_raw$x[,3],
-                     Age = age,
-                     Disease = gs)
-
-dataGG_clean <- dataGG %>%
-  drop_na() %>%
-  group_by(Disease) %>%
-  dplyr::slice(chull(PC1, PC2))  # Calculate the convex hull for each group
-
-ggplot(dataGG) +
-  aes(x = PC2, y = PC3, color = Disease) +  # Color by Disease
-  geom_point(aes(shape = Age)) +
-  geom_polygon(data = dataGG_clean,
-               aes(fill = Disease, color = NULL),  # Remove color mapping from geom_polygon
-               alpha = 0.3,
-               show.legend = FALSE) +
-  xlab(paste0("PC1, VarExp: ", percentVar[1], "%")) +  # Assuming percentVar is defined
-  ylab(paste0("PC2, VarExp: ", percentVar[2], "%")) +  # Assuming percentVar is defined
-  theme(plot.title = element_text(hjust = 0.5)) +
-  coord_fixed(ratio = sd_ratio)# Assuming sd_ratio is defined
-
-dev.copy(jpeg, filename = "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/PCA_Proteins_PC1_PC2_Age.jpg")
-dev.off();
-#PCA_GENDER
-
-PCA_raw <- prcomp(t(dat.log), scale. = FALSE)
-percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
-sd_ratio <- sqrt(percentVar[2] / percentVar[1])
-dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2], PC3 = PCA_raw$x[,3],
-                     Gender = gender,
-                     Disease = gs)
-
-dataGG_clean <- dataGG %>%
-  drop_na() %>%
-  group_by(Disease) %>%
-  dplyr::slice(chull(PC1, PC2))  # Calculate the convex hull for each group
-
-ggplot(dataGG) +
-  aes(x = PC1, y = PC2, color = Disease) +  # Color by Disease
-  geom_point(aes(shape = Gender)) +
-  geom_polygon(data = dataGG_clean,
-               aes(fill = Disease, color = NULL),  # Remove color mapping from geom_polygon
-               alpha = 0.3,
-               show.legend = FALSE) +
-  xlab(paste0("PC1, VarExp: ", percentVar[1], "%")) +  # Assuming percentVar is defined
-  ylab(paste0("PC2, VarExp: ", percentVar[2], "%")) +  # Assuming percentVar is defined
-  theme(plot.title = element_text(hjust = 0.5)) +
-  coord_fixed(ratio = sd_ratio)# Assuming sd_ratio is defined
-
-dev.copy(jpeg, filename = "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/PCA_Proteins_PC1_PC2_Disease.jpg")
-dev.off()
-
-## ----design-------------------------------------------------------------------
-x=meta$condition
-x1=str_replace_all(x," ", "_")
-x1=str_replace_all(x1,"-", "_")
-
-groups <-make.names(c("Stress","T1","T0"))# make.names(c("control","control","T0","T0"))
-levels(cond) <- groups
-meta$group <- cond
-# The function model.matrix is used to generate the design matrix
-design = model.matrix(~cond+gender+age) # 0 means no intercept for the linear model
-rownames(design) = cond
-colnames(design) = gsub("cond","",colnames(design))
-colnames(design)[1:3] <- c("Stress","T1","T0")
-#dat.log=as.matrix(dat.log@assays@data$counts)
+# Fit the linear model
 fit1 <- lmFit(dat.log, design)
-#______________________________T0________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat.log, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-top_genes_t0=top_genes
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
+## ----Differential Expression Analysis-----------------------------------------
 
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/DE_Proteins_Stress_T0.csv")
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'Stress-T0 (Proteins)')
-writeData(wb, sheet = 'Stress-T0 (Proteins)', x = gene_list)
+analyze_DE <- function(contrast_name, contrast_formula, output_file, plot_title) {
+  contrast <- makeContrasts(contrasts = contrast_formula, levels = design)
+  fit2 <- contrasts.fit(fit1, contrast)
+  fit3 <- eBayes(fit2, 0.01)
+  DE_genes <- decideTests(fit3)
+  print(summary(DE_genes))
+  
+  # Get the top differentially expressed genes
+  top_genes <- topTable(fit3, adjust = "BH", sort.by = "p", number = Inf, p.value = 0.05)
+  top_genes <- na.omit(top_genes)
+  
+  # Add gene symbols
+  gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
+  top_genes <- cbind(top_genes, UNIPROT = rownames(top_genes))
+  gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
+  gene_list <- na.omit(gene_list)
+  
+  # Save to CSV
+  write.csv(gene_list, output_file)
+  
+  # Volcano plot
+  EnhancedVolcano(top_genes,
+                  lab = rownames(top_genes),
+                  x = 'logFC',
+                  y = 'adj.P.Val',
+                  xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) + 0.5),
+                  ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
+                  title = plot_title,
+                  pCutoff = 0.0001,
+                  FCcutoff = 1.5,
+                  pointSize = 1.0)
+  dev.copy(jpeg, filename = gsub(".csv", ".jpg", output_file))
+  dev.off()
+  
+  return(gene_list)
+}
 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/to/output/DE_Proteins_Stress_T0.csv", "Proteins: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/to/output/DE_Proteins_Stress_T1.csv", "Proteins: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/to/output/DE_Proteins_T0_T1.csv", "Proteins: Heat stroke T0 vs. Heat stroke T1")
 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Volcano_Proteins_Stress_T0.jpg");
-dev.off ();
+## ----Gene Enrichment Analysis-------------------------------------------------
+perform_enrichment <- function(gene_list, output_file, plot_title) {
+  OrgDb <- 'org.Hs.eg.db'
+  ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+  ego_df <- as.data.frame(ego)
+  print(head(ego_df[1:7]))
+  
+  # Bar plot of enriched terms
+  barplot(ego, showCategory = 15)
+  dev.copy(jpeg, filename = gsub(".csv", "_GEA.jpg", output_file))
+  dev.off()
+  
+  return(ego_df)
+}
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/to/output/DE_Proteins_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/to/output/DE_Proteins_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/to/output/DE_Proteins_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
 
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Barplot_GEA_Proteins_Stress_T0.jpg");
-dev.off ();
-#______________________________T1________________________________
-contrast =  makeContrasts(contrasts=c("Stress-T1"),levels=design)
-fit2 <- contrasts.fit(fit1, contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit3)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes. 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-top_genes_t1=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/TopGenes_DEP_norm.xlsx'
-wb <- createWorkbook()
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/DE_Proteins_Stress_T1.csv")
-#output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/TopGenes_DEP.xlsx'
-
-addWorksheet(wb, sheetName = 'Stress-T1 (Proteins)')
-writeData(wb, sheet = 'Stress-T1 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Volcano_Proteins_Stress_T1.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Barplot_GEA_Proteins_Stress_T1.jpg");
-dev.off ();
-#____________________________________T0-T1_____________________________________
-contrast =  makeContrasts(contrasts="T0-T1",levels=design)
-fit1 <- lmFit(dat.log, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/DE_Proteins_T0_T1_norm.csv")
-addWorksheet(wb, sheetName = 'T0-T1 (Proteins)')
-writeData(wb, sheet = 'T0-T1 (Proteins)', x = gene_list)
-
-# VOLCANO PLOT
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Heat stroke T0 vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/Volcano_Proteins_T0_T1_norm.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="Barplot_GEA_Proteins_T1_T0_norm.jpg");
-dev.off ();
-
-# #PCA
-PCA_raw <- prcomp(t(dat.log), scale. = FALSE) #principal component analysis (PCA)
-
-percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
-sd_ratio <- sqrt(percentVar[2] / percentVar[1])
-
-dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2],
-                     Disease = meta$condition)
-
-ggplot(dataGG, aes(PC1, PC2)) +
-  geom_point(aes(colour = Disease)) +
-  ggtitle("PCA plot of the log-transformed proteins") +
-  xlab(paste0("PC1, VarExp: ", percentVar[1], "%")) +
-  ylab(paste0("PC2, VarExp: ", percentVar[2], "%")) +
-  theme(plot.title = element_text(hjust = 0.5))+
-  coord_fixed(ratio = sd_ratio) +
-  scale_shape_manual(values = c(4,15,20,30)) + 
-  scale_color_manual(values = c("green", "blue", "red"))
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/PCA_proteins.jpg");
-dev.off ()
-# # t-SNE
+# t-SNE
 tsne(dat.log,
      labels=as.factor(meta$condition),
      controlscale = TRUE,scale=3)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/t-SNE_proteins_norm2.jpg");
-dev.off ()
+dev.copy(jpeg,filename="path/HEATSTROKE/Proteomics_C_data/Results Overall/PROTEINS/t-SNE_proteins_norm2.jpg");
+dev.off ();
 
-# ______________________________________GENES___________________________________
-setwd("/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/PBMC_1st_Injection_DIANN_results20072023")
-meta <- read_excel("metadata.xlsx")
-data<-readr::read_tsv("report.gg_matrix.tsv")
-data$Genes%>% duplicated() %>% any()
-dat=data[2:55]
-rownames(dat)=data$Genes
-colnames(dat)=meta$`Sample ID`
-## ----log2transform1-----------------------------------------------------------
-dat.log = log2(dat)
-# Create a logical vector indicating which rows have NAs
-na_rows = rowSums(is.na(dat.log)) > 0
-#remove rows with NAs
-dat.log = na.omit(dat.log)
-protein_group_filtered = data$Genes[!na_rows]
-rownames(dat.log)=protein_group_filtered
-## ----boxplot1-----------------------------------------------------------------
-boxplot(dat.log,las=2,main="Cellular proteomic data: Genes")
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Barplot_before_Normalization_Genes.jpg");
-dev.off ();
-# Here the data is already median centered, we skip the following step. 
-dat.log = equalMedianNormalization(dat.log)
-boxplot(dat.log,las=2,main="Cellular proteomic data: Normalized Genes")
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Barplot_after_Normalization_Genes.jpg");
-dev.off ();
 ## ----AGE-GENDER---------------------------------------------------------------
 
 dat_Old = dat.log[,as.character(meta_Old$`Sample ID`)]
@@ -447,360 +236,6 @@ dat_Young = dat.log[,as.character(meta_Young$`Sample ID`)]
 
 dat_Male = dat.log[,as.character(meta_Male$`Sample ID`)]
 dat_Female = dat.log[,as.character(meta_Female$`Sample ID`)]
-
-## ----design-------------------------------------------------------------------
-# The function model.matrix is used to generate the design matrix
-design = model.matrix(~cond+gender+age) # 0 means no intercept for the linear model
-colnames(design) = gsub("cond","",colnames(design))
-colnames(design)[1:3] <- c("Stress","T0","T1")
-rownames(design)=cond
-#___________________________________T0__________________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat.log, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-write.csv(top_genes, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T0.csv")
-addWorksheet(wb, sheetName = 'Stress-T0 (Genes)')
-writeData(wb, sheet = 'Stress-T0 (Genes)', x = cbind(rownames(top_genes),top_genes))
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Volcano_Genes_Stress_T0.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "SYMBOL")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='SYMBOL'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "SYMBOL", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Barplot_GEA_Genes_Stress_T0.jpg");
-dev.off ();
-#___________________________________T1__________________________________________
-contrast =  makeContrasts(contrasts="Stress-T1",levels=design)
-fit1 <- lmFit(dat.log, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-
-write.csv(top_genes, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T1.csv")
-addWorksheet(wb, sheetName = 'Stress-T1 (Genes)')
-writeData(wb, sheet = 'Stress-T1 (Genes)', x = cbind(rownames(top_genes),top_genes))
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Volcano_Genes_Stress_T1.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "SYMBOL")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='SYMBOL'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "SYMBOL", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Barplot_GEA_Genes_Stress_T1.jpg");
-dev.off ();
-
-#____________________________________T0-T1______________________________________
-
-contrast =  makeContrasts(contrasts="T1-T0",levels=design)
-fit1 <- lmFit(dat.log, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-write.csv(top_genes, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_T0_T1.csv")
-addWorksheet(wb, sheetName = 'T0-T1 (Genes)')
-writeData(wb, sheet = 'T0-T1 (Genes)', x = cbind(rownames(top_genes),top_genes))
-# Save the Excel file
-saveWorkbook(wb, output_file)
-# VOLCANO PLOT
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                title = 'Proteins: Heat stroke T0 vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Volcano_Genes_T0_T1.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "SYMBOL")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='SYMBOL'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "SYMBOL", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/Barplot_GEA_Genes_T1_T0.jpg");
-dev.off ();
-
-# #PCA
-PCA_raw <- prcomp(t(dat.log), scale. = FALSE) #principal component analysis (PCA)
-
-percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
-sd_ratio <- sqrt(percentVar[2] / percentVar[1])
-
-dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2], PC3 = PCA_raw$x[,3], PC4 = PCA_raw$x[,4],
-                     Disease = meta$condition)
-
-ggplot(dataGG, aes(PC3, PC4)) +
-  geom_point(aes(colour = Disease)) +
-  ggtitle("PCA plot of the log-transformed genes") +
-  xlab(paste0("PC1, VarExp: ", percentVar[1], "%")) +
-  ylab(paste0("PC2, VarExp: ", percentVar[2], "%")) +
-  theme(plot.title = element_text(hjust = 0.5))+
-  coord_fixed(ratio = sd_ratio) +
-  scale_shape_manual(values = c(4,15,20,30)) + 
-  scale_color_manual(values = c("green", "blue", "red"))
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/PCA_genes.jpg");
-dev.off ()
-# # t-SNE
-tsne(dat.log,
-     labels=as.factor(meta$condition),
-     controlscale = TRUE,scale=3)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/t-SNE_genes.jpg");
-dev.off ()
-
-a <- list('DE T0' = rownames(top_genes_t0),
-          'DE T1' = rownames(top_genes_t1))
-venn <- ggvenn(a)
-# Add a title to the Venn diagram
-venn <- venn + ggtitle("DE Proteins")
-# Print the Venn diagram
-print(venn)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_proteins_T0_T1.jpg");
-dev.off ();
-
-colors = c("green", "red" )
-stnames <-  c("HS-T0", "HS-T1") 
-subjects <-  c("Upregulated", "Downregulated")       
-# Create the matrix of the values.
-Values <- matrix( c(1810,1814,   1820 ,1800 ) , nrow=2, ncol=2, byrow=TRUE) 
-# Create the bar chart
-barplot(Values, names.arg = stnames, ylab = "Number of DE Proteins", col = colors, beside=TRUE )
-#Ad an optional legend
-legend("bottomright", subjects, cex = 0.7, fill = colors) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_proteins_T0_T1_barplot.jpg");
-dev.off ();
-
-# PROMOTERS
-# setwd("/Users/mariacastillo/Desktop/Proteomics_data/PBMC_1st_Injection_DIANN_results20072023")
-# meta <- read_excel("metadata.xlsx")
-# data<-readr::read_tsv("report.pr_matrix.tsv")
-# data$Protein.Group%>% duplicated() %>% any()
-# colnames(data)[1]='UNIPROT'
-# data_ = AnnotationDbi::select(org.Hs.eg.db, keys = data$UNIPROT, columns = "ENTREZID", keytype = "UNIPROT")
-# data_new <- merge(data_, data, by = "UNIPROT", all = TRUE)
-# data_unique <- make_unique(data_new, "ENTREZID", "UNIPROT", delim = ";")
-# d_columns <- 7:60
-# data_se <- make_se(data_unique, d_columns, meta)
-# 
-# dat=data[6:59]
-# rownames(dat)=data$Genes
-# 
-# ## ----log2transform1-----------------------------------------------------------
-# dat.log = log2(dat)
-# # Create a logical vector indicating which rows have NAs
-# na_rows = rowSums(is.na(dat.log)) > 0
-# #remove rows with NAs
-# dat.log = na.omit(dat.log)
-# protein_group_filtered = data$Protein.Group[!na_rows]
-# rownames(dat.log)=protein_group_filtered
-# ## ----boxplot1-----------------------------------------------------------------
-# boxplot(dat.log,las=2,main="Cellular proteomic data: Promoters")
-# dev.copy(jpeg,filename="Barplot_before_Normalization_Promoters.jpg");
-# dev.off ();
-# # Here the data is already median centered, we skip the following step. 
-# dat.log = equalMedianNormalization(dat.log)
-# boxplot(dat.log,las=2,main="Cellular proteomic data: Promoters")
-# dev.copy(jpeg,filename="Barplot_after_Normalization_Promoters.jpg");
-# dev.off ();
-# ## ----design-------------------------------------------------------------------
-# x=meta$condition
-# x1=str_replace_all(x," ", "_")
-# x1=str_replace_all(x1,"-", "_")
-# 
-# # The function model.matrix is used to generate the design matrix
-# design = model.matrix(~0+cond) # 0 means no intercept for the linear model
-# colnames(design) = gsub("cond","",colnames(design))
-# colnames(design)[1:3] <- c("Stress","T0","T1")
-# contrast =  makeContrasts(contrasts="T1-Stress",levels=design)
-# fit1 <- lmFit(dat.log, design)
-# fit2 <- contrasts.fit(fit1,contrasts = contrast)
-# fit3 <- eBayes(fit2, 0.01)
-# DE_genes2 <- decideTests(fit2)
-# summary(DE_genes2)
-# # Get the top 10 deferentially expressed genes
-# top_genes <- topTable(fit3, adjust.method="BY", sort.by ="p", p.value=0.05,number=Inf)
-# top_genes=na.omit(top_genes)
-# head(top_genes)
-# write.csv(top_genes, "DE_Promoters_Stress_T1.csv")
-# EnhancedVolcano(top_genes,
-#                 lab = rownames(top_genes),
-#                 x = 'logFC',
-#                 y = 'adj.P.Val',
-#                 pCutoff = 0.0001,
-#                 FCcutoff = 1,
-#                 pointSize = 1.0)
-# dev.copy(jpeg,filename="Volcano_Promoters_Stress_T1.jpg");
-# dev.off ();
-# 
-# gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-# top_genes=cbind(top_genes, rownames(top_genes))
-# colnames(top_genes)[7]='UNIPROT'
-# head(top_genes)
-# gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-# gene_list=na.omit(gene_list)
-# 
-# # GENE ENRICHMENT ANALYSIS
-# OrgDb='org.Hs.eg.db'
-# ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-# ego_df <- as.data.frame(ego)
-# head(ego_df[1:7])
-# #Bar plot of enriched terms.s
-# barplot(ego, showCategory=15) 
-# dev.copy(jpeg,filename="Barplot_GEA_Promoters_Stress_T1.jpg");
-# dev.off ();
-# 
-# contrast =  makeContrasts(contrasts="T0-Stress",levels=design)
-# fit1 <- lmFit(dat.log, design)
-# fit2 <- contrasts.fit(fit1,contrasts = contrast)
-# fit3 <- eBayes(fit2, 0.01)
-# DE_genes2 <- decideTests(fit2)
-# summary(DE_genes2)
-# # Get the top 10 deferentially expressed genes
-# top_genes <- topTable(fit3, adjust="BY", sort.by ="p", p.value=0.05,number=Inf)
-# top_genes=na.omit(top_genes)
-# write.csv(top_genes, "DE_Promoters_Stress_T0.csv")
-# EnhancedVolcano(top_genes,
-#                 lab = rownames(top_genes),
-#                 x = 'logFC',
-#                 y = 'adj.P.Val',
-#                 pCutoff = 0.0001,
-#                 FCcutoff = 1,
-#                 pointSize = 1.0)
-# dev.copy(jpeg,filename="Volcano_Promoters_Stress_T0.jpg");
-# dev.off ();
-# 
-# gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-# top_genes=cbind(top_genes, rownames(top_genes))
-# colnames(top_genes)[7]='UNIPROT'
-# head(top_genes)
-# gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-# gene_list=na.omit(gene_list)
-# 
-# # GENE ENRICHMENT ANALYSIS
-# OrgDb='org.Hs.eg.db'
-# ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-# ego_df <- as.data.frame(ego)
-# head(ego_df[1:7])
-# #Bar plot of enriched terms.s
-# barplot(ego, showCategory=15) 
-# dev.copy(jpeg,filename="Barplot_GEA_Promoters_Stress_T0.jpg");
-# dev.off ();
-# 
-# contrast =  makeContrasts(contrasts="T1-T0",levels=design)
-# fit1 <- lmFit(dat.log, design)
-# fit2 <- contrasts.fit(fit1,contrasts = contrast)
-# fit3 <- eBayes(fit2, 0.01)
-# DE_genes2 <- decideTests(fit2)
-# summary(DE_genes2)
-# # Get the top 10 deferentially expressed genes
-# top_genes <- topTable(fit3, adjust="BY", sort.by="p", p.value=0.05,number=Inf)
-# top_genes=na.omit(top_genes)
-# write.csv(top_genes, "DE_Promoters_T0_T1.csv")
-# # VOLCANO PLOT
-# EnhancedVolcano(top_genes,
-#                 lab = rownames(top_genes),
-#                 x = 'logFC',
-#                 y = 'adj.P.Val',
-#                 pCutoff = 0.0001,
-#                 FCcutoff = 1,
-#                 pointSize = 1.0)
-# dev.copy(jpeg,filename="Volcano_Promoters_T0_T1.jpg");
-# dev.off ();
-# 
-# gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-# top_genes=cbind(top_genes, rownames(top_genes))
-# colnames(top_genes)[7]='UNIPROT'
-# head(top_genes)
-# gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-# gene_list=na.omit(gene_list)
-# 
-# # GENE ENRICHMENT ANALYSIS
-# OrgDb='org.Hs.eg.db'
-# ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-# ego_df <- as.data.frame(ego)
-# head(ego_df[1:7])
-# #Bar plot of enriched terms.s
-# barplot(ego, showCategory=15) 
-# dev.copy(jpeg,filename="Barplot_GEA_Promoters_T1_T0.jpg");
-# dev.off ();
-
-# #PCA
-# 
-# vsdata <- vst(dds, nsub=nrow(dds)/2, blind=FALSE)
-# plotPCA(vsdata, intgroup="condition") #using the DESEQ2 plotPCA fxn we can
-# 
-# dev.copy(jpeg,filename="PCA_Promoters.jpg");
-# dev.off ()
-# 
-# # t-SNE
-# tsne(dat.log,labels=as.factor(rownames(dat.log)))
-
-
 
 
 # ----AGE----------------------
@@ -819,119 +254,16 @@ rownames(design) = cond
 colnames(design) = gsub("cond","",colnames(design))
 colnames(design)[1:3] <- c("Stress","T0","T1")
 
-#______________________________T0________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat_Young, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-top_genes_t0=top_genes
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_Stress_T0.csv", "Genes: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_Stress_T1.csv", "Genes: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_T0_T1.csv", "Genes: Heat stroke T0 vs. Heat stroke T1")
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Genes_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
 
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Proteins_Stress_T0_YOUNG.csv")
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'Stress-T0 (Proteins)')
-writeData(wb, sheet = 'Stress-T0 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/Volcano_Proteins_Stress_T0_YOUNG.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/Barplot_GEA_Proteins_Stress_T0_YOUNG.jpg");
-dev.off ();
-#______________________________T1________________________________
-contrast =  makeContrasts(contrasts=c("Stress-T1"),levels=design)
-fit2 <- contrasts.fit(fit1, contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit3)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes. 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-top_genes_t1=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/TopGenes_DEP_norm_YOUNG.xlsx'
-wb <- createWorkbook()
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/DE_Proteins_Stress_T1_YOUNG.csv")
-#output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/TopGenes_DEP.xlsx'
-
-addWorksheet(wb, sheetName = 'Stress-T1 (Proteins)')
-writeData(wb, sheet = 'Stress-T1 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/Volcano_Proteins_Stress_T1_YOUNG.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/YOUNG/Barplot_GEA_Proteins_Stress_T1_YOUNG.jpg");
-dev.off ();
 #______________________________OLD_______________________________
 gs= factor(meta_Old$condition)
 gender = factor(meta_Old$Gender)
@@ -948,119 +280,15 @@ rownames(design) = cond
 colnames(design) = gsub("cond","",colnames(design))
 colnames(design)[1:3] <- c("Stress","T1","T0")
 
-#______________________________T0________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat_Old, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-top_genes_t0=top_genes
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_Stress_T0.csv", "Genes: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_Stress_T1.csv", "Genes: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_T0_T1.csv", "Genes: Heat stroke T0 vs. Heat stroke T1")
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Proteins_Stress_T0_OLD.csv")
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'Stress-T0 (Proteins)')
-writeData(wb, sheet = 'Stress-T0 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/Volcano_Proteins_Stress_T0_OLD.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/Barplot_GEA_Proteins_Stress_T0_OLD.jpg");
-dev.off ();
-#______________________________T1________________________________
-contrast =  makeContrasts(contrasts=c("Stress-T1"),levels=design)
-fit2 <- contrasts.fit(fit1, contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit3)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes. 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-top_genes_t1=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/TopGenes_DEP_norm_OLD.xlsx'
-wb <- createWorkbook()
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Proteins_Stress_T1_OLD.csv")
-#output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/TopGenes_DEP.xlsx'
-
-addWorksheet(wb, sheetName = 'Stress-T1 (Proteins)')
-writeData(wb, sheet = 'Stress-T1 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/Volcano_Proteins_Stress_T1_OLD.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/Barplot_GEA_Proteins_Stress_T1_OLD.jpg");
-dev.off ();
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/AGE/OLD/DE_Genes_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
 
 # ----GENDER----------------------
 
@@ -1081,119 +309,16 @@ rownames(design) = cond
 colnames(design) = gsub("cond","",colnames(design))
 colnames(design)[1:3] <- c("Stress","T1","T0")
 
-#______________________________T0________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat_Male, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-top_genes_t0=top_genes
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_Stress_T0.csv", "Genes: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_Stress_T1.csv", "Genes: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_T0_T1.csv", "Genes: Heat stroke T0 vs. Heat stroke T1")
 
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Genes_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
 
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Proteins_Stress_T0_MALE.csv")
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'Stress-T0 (Proteins)')
-writeData(wb, sheet = 'Stress-T0 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/Volcano_Proteins_Stress_T0_MALE.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/Barplot_GEA_Proteins_Stress_T0_MALE.jpg");
-dev.off ();
-#______________________________T1________________________________
-contrast =  makeContrasts(contrasts=c("Stress-T1"),levels=design)
-fit2 <- contrasts.fit(fit1, contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit3)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes. 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-top_genes_t1=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/TopGenes_DEP_norm_MALE.xlsx'
-wb <- createWorkbook()
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/DE_Proteins_Stress_T1_MALE.csv")
-#output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/TopGenes_DEP.xlsx'
-
-addWorksheet(wb, sheetName = 'Stress-T1 (Proteins)')
-writeData(wb, sheet = 'Stress-T1 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/Volcano_Proteins_Stress_T1_MALE.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/MALE/Barplot_GEA_Proteins_Stress_T1_MALE.jpg");
-dev.off ();
 #______________________________FEMALE_______________________________
 gs= factor(meta_Female$condition)
 age = factor(meta_Female$Age)
@@ -1211,409 +336,107 @@ rownames(design) = cond
 colnames(design) = gsub("cond","",colnames(design))
 colnames(design)[1:3] <- c("Stress","T1","T0")
 
-#______________________________T0________________________________
-contrast =  makeContrasts(contrasts="Stress-T0",levels=design)
-fit1 <- lmFit(dat_Female, design)
-fit2 <- contrasts.fit(fit1,contrasts = contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit2)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-top_genes_t0=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Proteins_Stress_T0_FEMALE.csv")
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'Stress-T0 (Proteins)')
-writeData(wb, sheet = 'Stress-T0 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T0',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/Volcano_Proteins_Stress_T0_FEMALE.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/Barplot_GEA_Proteins_Stress_T0_FEMALE.jpg");
-dev.off ();
-#______________________________T1________________________________
-contrast =  makeContrasts(contrasts=c("Stress-T1"),levels=design)
-fit2 <- contrasts.fit(fit1, contrast)
-fit3 <- eBayes(fit2, 0.01)
-DE_genes2 <- decideTests(fit3)
-summary(DE_genes2)
-# Get the top 10 deferentially expressed genes. 
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf, p.value=0.05)
-top_genes=na.omit(top_genes)
-head(top_genes)
-top_genes_t1=top_genes
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "SYMBOL", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, by = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/TopGenes_DEP_norm_FEMALE.xlsx'
-wb <- createWorkbook()
-
-write.csv(gene_list, "/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Proteins_Stress_T1_FEMALE.csv")
-#output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/TopGenes_DEP.xlsx'
-
-addWorksheet(wb, sheetName = 'Stress-T1 (Proteins)')
-writeData(wb, sheet = 'Stress-T1 (Proteins)', x = gene_list)
-
-top_genes <- topTable(fit3, adjust="BH", sort.by ="p", number=Inf)
-EnhancedVolcano(top_genes,
-                lab = rownames(top_genes),
-                x = 'logFC',
-                y = 'adj.P.Val',
-                xlim = c(min(top_genes[['logFC']], na.rm = TRUE) - 0.5, max(top_genes[['logFC']], na.rm = TRUE) +0.5),
-                ylim = c(0, max(-log10(top_genes[['adj.P.Val']]), na.rm = TRUE) + 5),
-                title = 'Proteins: Control vs. Heat stroke T1',
-                pCutoff = 0.0001,
-                FCcutoff = 1.5,
-                pointSize = 1.0)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/Volcano_Proteins_Stress_T1_FEMALE.jpg");
-dev.off ();
-
-gene_ids <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(top_genes), columns = "ENTREZID", keytype = "UNIPROT")
-top_genes=cbind(top_genes, rownames(top_genes))
-colnames(top_genes)[7]='UNIPROT'
-head(top_genes)
-gene_list <- merge(top_genes, gene_ids, BH = "UNIPROT", all = TRUE)
-gene_list=na.omit(gene_list)
-
-# GENE ENRICHMENT ANALYSIS
-OrgDb='org.Hs.eg.db'
-ego <- enrichGO(gene_list$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-ego_df <- as.data.frame(ego)
-head(ego_df[1:7])
-#Bar plot of enriched terms.s
-barplot(ego, showCategory=15) 
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/Barplot_GEA_Proteins_Stress_T1_FEMALE.jpg");
-dev.off ();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-library(ggvenn)
-library(VennDiagram)
-library(openxlsx)
-library(topGO)
-library(gprofiler2)
-library("qpcR")      
-
-transcriptomics_HS_T0 = read_excel('/Users/mariacastillo/Desktop/HEATSTROKE/Transcriptomics/Results_DE_analysis_genes.xlsx', sheet= 'Heat stress - Stroke T0')
-proteomic_genes_HS_T0 = read_excel('/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Ressults_proteomics_cell_analysis.xlsx', sheet= 'DE_Genes_Stress_T1')
-proteomic_proteins_HS_T0 = read_excel('/Users/mariacastillo/Desktop/HEATSTROKE/Proteomics_C_data/Ressults_proteomics_cell_analysis.xlsx', sheet= 'DE_Proteins_Stress_T1')
-Genes_p = AnnotationDbi::select(org.Hs.eg.db, keys = proteomic_proteins_HS_T0$UNIPROT, columns = "SYMBOL", keytype = "UNIPROT")
-Genes_pro <- merge(proteomic_proteins_HS_T0, Genes_p, BY = "UNIPROT", all = TRUE)
-Genes_proteins=na.omit(Genes_pro$SYMBOL)
-methylation_HS_T0 = read.csv('/Users/mariacastillo/Desktop/HEATSTROKE/Methylation/results_final/reports_ALL/differential_methylation_data/diffMethTable_region_cmp1_genes.csv')
-methylation_HS_T0=na.omit(methylation_HS_T0)
-methylation_HS_T0_F=methylation_HS_T0$symbol
-
-int_trans_meth=list(intersect(transcriptomics_HS_T0$SYMBOL, methylation_HS_T0_F))
-int_trans_prote_g=list(intersect(transcriptomics_HS_T0$SYMBOL, proteomic_genes_HS_T0$SYMBOL))
-int_trans_prote_p=list(intersect(transcriptomics_HS_T0$SYMBOL, Genes_proteins))
-int_prot_meth_g=list(intersect(proteomic_genes_HS_T0$SYMBOL, methylation_HS_T0_F))
-int_prot_meth_p=list(intersect(Genes_proteins, methylation_HS_T0_F))
-
-int_trans_meth_trans_prote_p=list(intersect(unlist(int_trans_meth), unlist(int_trans_prote_p)))#transcription,methylation,proteomics(p)
-int_trans_meth_trans_prote_g=list(intersect(unlist(int_trans_meth), unlist(int_trans_prote_g)))#transcription,methylation,proteomics(g)
-
-int_trans_meth_prot_meth_p=list(intersect(unlist(int_trans_meth), unlist(int_prot_meth_p)))#transcription,methylation,proteomics(p)
-int_trans_meth_prot_meth_g=list(intersect(unlist(int_trans_meth), unlist(int_prot_meth_g)))#transcription,methylation,proteomics(g)
-
-int_trans_prote_prot_meth_p=list(intersect(unlist(int_trans_prote_p), unlist(int_prot_meth_p)))#transcription,methylation,proteomics(p)
-int_trans_prote_prot_meth_g=list(intersect(unlist(int_trans_prote_g), unlist(int_prot_meth_g)))#transcription,methylation,proteomics(g)
-
-int_trans_prote_prot_meth_=list(intersect(unlist(int_prot_meth_g), unlist(int_prot_meth_p)))
-
-# Create an Excel file and add sheets with the lists
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/shared_genes_lists.xlsx'
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'int_trans_meth')
-writeData(wb, sheet = 'int_trans_meth', x = int_trans_meth)
-addWorksheet(wb, sheetName = 'int_trans_prote(g)')
-writeData(wb, sheet = 'int_trans_prote(g)', x = int_trans_prote_g)
-addWorksheet(wb, sheetName = 'int_trans_prote(p)')
-writeData(wb, sheet = 'int_trans_prote(p)', x = int_trans_prote_p)
-addWorksheet(wb, sheetName = 'int_prot(g)_meth')
-writeData(wb, sheet = 'int_prot(g)_meth', x = int_prot_meth_g)
-addWorksheet(wb, sheetName = 'int_prot(p)_meth')
-writeData(wb, sheet = 'int_prot(p)_meth', x = int_prot_meth_p)
-addWorksheet(wb, sheetName = 'int_meth_trans_prot(g)')
-writeData(wb, sheet = 'int_meth_trans_prot(g)', x = int_trans_prote_prot_meth_g)
-addWorksheet(wb, sheetName = 'int_meth_trans_prot(p)')
-writeData(wb, sheet = 'int_meth_trans_prot(p)', x = int_trans_prote_prot_meth_p)
-addWorksheet(wb, sheetName = 'int_meth_trans_prot(p)_prot(g)')
-writeData(wb, sheet = 'int_meth_trans_prot(p)_prot(g)', x = int_trans_prote_prot_meth_)
-# Save the Excel file
-saveWorkbook(wb, output_file)
-
-
-GO_int_trans_meth <- gost(query = int_trans_meth, 
-                          organism = "hsapiens", ordered_query = TRUE, 
-                          multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                          measure_underrepresentation = FALSE, evcodes = FALSE, 
-                          user_threshold = 0.05, correction_method = "fdr", 
-                          domain_scope = "annotated", custom_bg = NULL, 
-                          numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_trans_prote_g <- gost(query = int_trans_prote_g, 
-                             organism = "hsapiens", ordered_query = TRUE, 
-                             multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                             measure_underrepresentation = FALSE, evcodes = FALSE, 
-                             user_threshold = 0.05, correction_method = "fdr", 
-                             domain_scope = "annotated", custom_bg = NULL, 
-                             numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_trans_prote_p <- gost(query = int_trans_prote_p, 
-                             organism = "hsapiens", ordered_query = TRUE, 
-                             multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                             measure_underrepresentation = FALSE, evcodes = FALSE, 
-                             user_threshold = 0.05, correction_method = "fdr", 
-                             domain_scope = "annotated", custom_bg = NULL, 
-                             numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_prot_meth_g <- gost(query = int_prot_meth_g, 
-                           organism = "hsapiens", ordered_query = TRUE, 
-                           multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                           measure_underrepresentation = FALSE, evcodes = FALSE, 
-                           user_threshold = 0.05, correction_method = "fdr", 
-                           domain_scope = "annotated", custom_bg = NULL, 
-                           numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_prot_meth_p <- gost(query = int_prot_meth_p, 
-                           organism = "hsapiens", ordered_query = TRUE, 
-                           multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                           measure_underrepresentation = FALSE, evcodes = FALSE, 
-                           user_threshold = 0.05, correction_method = "fdr", 
-                           domain_scope = "annotated", custom_bg = NULL, 
-                           numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_t_p_p_m_g <- gost(query = int_trans_prote_prot_meth_g, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_t_p_p_m_p <- gost(query = int_trans_prote_prot_meth_p, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_int_tran_prot_prot_meth_ <- gost(query = int_trans_prote_prot_meth_, 
-                                    organism = "hsapiens", ordered_query = TRUE, 
-                                    multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                                    measure_underrepresentation = FALSE, evcodes = FALSE, 
-                                    user_threshold = 0.05, correction_method = "fdr", 
-                                    domain_scope = "annotated", custom_bg = NULL, 
-                                    numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-
-# Create an Excel file and add sheets with the lists
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/shared_genes_GEA.xlsx'
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'GO_int_trans_meth')
-writeData(wb, sheet = 'GO_int_trans_meth', x = cbind(GO_int_trans_meth$result$term_id,GO_int_trans_meth$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_trans_prote_g')
-writeData(wb, sheet = 'GO_int_trans_prote_g', x = cbind(GO_int_trans_prote_g$result$term_id,GO_int_trans_prote_g$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_trans_prote_p')
-writeData(wb, sheet = 'GO_int_trans_prote_p', x = cbind(GO_int_trans_prote_p$result$term_id,GO_int_trans_prote_p$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_prot_meth_g')
-writeData(wb, sheet = 'GO_int_prot_meth_g', x = cbind(GO_int_prot_meth_g$result$term_id,GO_int_prot_meth_g$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_prot_meth_p')
-writeData(wb, sheet = 'GO_int_prot_meth_p', x = cbind(GO_int_prot_meth_p$result$term_id,GO_int_prot_meth_p$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_t_p_p_m_g')
-writeData(wb, sheet = 'GO_int_t_p_p_m_g', x = cbind(GO_int_t_p_p_m_g$result$term_id,GO_int_t_p_p_m_g$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_t_p_p_m_p')
-writeData(wb, sheet = 'GO_int_t_p_p_m_p', x = cbind(GO_int_t_p_p_m_p$result$term_id,GO_int_t_p_p_m_p$result$term_name))
-addWorksheet(wb, sheetName = 'GO_int_tran_prot_prot_meth_')
-writeData(wb, sheet = 'GO_int_tran_prot_prot_meth_', x = cbind(GO_int_tran_prot_prot_meth_$result$term_id,GO_int_tran_prot_prot_meth_$result$term_name))
-# Save the Excel file
-saveWorkbook(wb, output_file)
-
-transcript_methylation=c(transcriptomics_HS_T0$SYMBOL, methylation_HS_T0_F)
-proteomic_g_methylation=c(proteomic_genes_HS_T0$SYMBOL,methylation_HS_T0_F)
-transcript_proteomic_g=c(transcriptomics_HS_T0$SYMBOL,proteomic_genes_HS_T0$SYMBOL)
-proteomic_p_methylation=c(Genes_proteins, methylation_HS_T0_F)
-transcript_proteomic_p=c(transcriptomics_HS_T0$SYMBOL,Genes_proteins)
-
-unique_transcriptomics_g <- setdiff(transcriptomics_HS_T0$SYMBOL,proteomic_g_methylation)
-unique_transcriptomics_p <- setdiff(transcriptomics_HS_T0$SYMBOL,proteomic_p_methylation)
-unique_methylation_g <- setdiff(methylation_HS_T0_F,transcript_proteomic_g)
-unique_methylation_p <- setdiff(methylation_HS_T0_F,transcript_proteomic_p)
-unique_proteomics_p <- setdiff(Genes_proteins,transcript_methylation)
-unique_proteomics_g <- setdiff(proteomic_genes_HS_T0$SYMBOL,transcript_methylation)
-
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/unique_genes_lists.xlsx'
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'unique_transcriptomics_g')
-writeData(wb, sheet = 'unique_transcriptomics_g', x = unique_transcriptomics_g)
-addWorksheet(wb, sheetName = 'unique_transcriptomics_p')
-writeData(wb, sheet = 'unique_transcriptomics_p', x = unique_transcriptomics_p)
-addWorksheet(wb, sheetName = 'unique_methylation_g')
-writeData(wb, sheet = 'unique_methylation_g', x = unique_methylation_g)
-addWorksheet(wb, sheetName = 'unique_methylation_p')
-writeData(wb, sheet = 'unique_methylation_p', x = unique_methylation_p)
-addWorksheet(wb, sheetName = 'unique_proteomics_p')
-writeData(wb, sheet = 'unique_proteomics_p', x = unique_proteomics_p)
-addWorksheet(wb, sheetName = 'unique_proteomics_g')
-writeData(wb, sheet = 'unique_proteomics_g', x = unique_proteomics_g)
-# Save the Excel file
-saveWorkbook(wb, output_file)
-
-GO_unique_transcriptomics_g <- gost(query = unique_transcriptomics_g, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_unique_transcriptomics_p <- gost(query = unique_transcriptomics_p, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_unique_methylation_g <- gost(query = unique_methylation_g, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_unique_methylation_p <- gost(query = unique_methylation_p, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_unique_proteomics_p <- gost(query = unique_proteomics_p, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-GO_unique_proteomics_g <- gost(query = unique_proteomics_g, 
-                         organism = "hsapiens", ordered_query = TRUE, 
-                         multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-                         measure_underrepresentation = FALSE, evcodes = FALSE, 
-                         user_threshold = 0.05, correction_method = "fdr", 
-                         domain_scope = "annotated", custom_bg = NULL, 
-                         numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE)
-
-output_file <- '/Users/mariacastillo/Desktop/HEATSTROKE/unique_genes_GEA.xlsx'
-wb <- createWorkbook()
-addWorksheet(wb, sheetName = 'unique_transcriptomics_g')
-writeData(wb, sheet = 'unique_transcriptomics_g', x = cbind(GO_unique_transcriptomics_g$result$term_id,GO_unique_transcriptomics_g$result$term_name))
-addWorksheet(wb, sheetName = 'unique_transcriptomics_p')
-writeData(wb, sheet = 'unique_transcriptomics_p', x = cbind(GO_unique_transcriptomics_p$result$term_id,GO_unique_transcriptomics_p$result$term_name))
-addWorksheet(wb, sheetName = 'unique_methylation_g')
-writeData(wb, sheet = 'unique_methylation_g', x = cbind(GO_unique_methylation_g$result$term_id,GO_unique_methylation_g$result$term_name))
-addWorksheet(wb, sheetName = 'unique_methylation_p')
-writeData(wb, sheet = 'unique_methylation_p', x = cbind(GO_unique_methylation_p$result$term_id,GO_unique_methylation_p$result$term_name))
-addWorksheet(wb, sheetName = 'unique_proteomics_p')
-writeData(wb, sheet = 'unique_proteomics_p', x = cbind(GO_unique_proteomics_p$result$term_id,GO_unique_proteomics_p$result$term_name))
-addWorksheet(wb, sheetName = 'unique_proteomics_g')
-writeData(wb, sheet = 'unique_proteomics_g', x = cbind(GO_unique_proteomics_g$result$term_id,GO_unique_proteomics_g$result$term_name))
-# Save the Excel file
-saveWorkbook(wb, output_file)
-
-a <- list('Transcriptomis' = transcriptomics_HS_T0$SYMBOL,
-          #'Cell proteomics: genes' = proteomic_genes_HS_T0$SYMBOL,
-          'Cell proteomics: proteins'= Genes_proteins,
-          'Methylation' = methylation_HS_T0_F)
-
-ggvenn(a)
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Figures/Venn_Diagram_Colors_Trans_Proteo_Meth.jpg");
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_Stress_T0.csv", "Genes: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_Stress_T1.csv", "Genes: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_T0_T1.csv", "Genes: Heat stroke T0 vs. Heat stroke T1")
+
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Age_Gender_proteomics/GENDER/FEMALE/DE_Genes_T0_T1.csv", "Gene Enrichment: T0 vs. T1”)
+
+# ______________________________________GENES___________________________________
+
+readr::read_tsv("report.gg_matrix.tsv")
+data$Genes%>% duplicated() %>% any()
+dat=data[2:55]
+rownames(dat)=data$Genes
+colnames(dat)=meta$Sample ID
+output_dir="/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES"
+
+dat.log <- process_proteomics_data(dat, meta, output_dir)
+
+## ----design-------------------------------------------------------------------
+# The function model.matrix is used to generate the design matrix
+gs= factor(meta$condition)
+Disease = factor(meta$condition)
+gender = factor(meta$Gender)
+age = factor(meta$Age)
+x=meta$condition
+x1=str_replace_all(x," ", "_")
+x1=str_replace_all(x1,"-", "_")
+cond = as.factor(x1)
+
+design = model.matrix(~cond+gender+age) # 0 means no intercept for the linear model
+colnames(design) = gsub("cond","",colnames(design))
+colnames(design)[1:3] <- c("Stress","T0","T1")
+rownames(design)=cond
+
+# PCA Plots
+plot_pca(dat.log, gs, "Disease (PC1 vs PC2)", file.path(output_dir, "PCA_Genes_PC1_PC2_Disease.jpg"))
+plot_pca(dat.log, age, "Age (PC2 vs PC3)", file.path(age_dir, "PCA_Genes_PC2_PC3_Age.jpg"))
+plot_pca(dat.log, gender, "Gender (PC1 vs PC2)", file.path(gender_dir, "PCA_Genes_PC1_PC2_Gender.jpg"))
+
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T0.csv", "Genes: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T1.csv", "Genes: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_T0_T1.csv", "Genes: Heat stroke T0 vs. Heat stroke T1")
+
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_Genes_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
+
+# # t-SNE
+tsne(dat.log,
+     labels=as.factor(meta$condition),
+     controlscale = TRUE,scale=3)
+dev.copy(jpeg,filename=paste0(output_dir,"/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/t-SNE_genes.jpg"));
 dev.off ()
 
-display_venn <- function(x, ...){
-  library(VennDiagram)
-  grid.newpDisease()
-  venn_object <- venn.diagram(x, filename = NULL, ...)
-  grid.draw(venn_object)
-}
-display_venn(list(transcriptomics_HS_T0$SYMBOL, proteomic_genes_HS_T0$SYMBOL, methylation_HS_T0_F),category.names = c("Transcriptomis" , "Cell proteomics " , "Methylation"))
-dev.copy(jpeg,filename="/Users/mariacastillo/Desktop/HEATSTROKE/Figures/Venn_Diagram_Trans_Proteo_Meth.jpg");
-dev.off ()
+a <- list('DE T0' = rownames(top_genes_t0),
+          'DE T1' = rownames(top_genes_t1))
+venn <- ggvenn(a)
+# Add a title to the Venn diagram
+venn <- venn + ggtitle("DE Proteins")
+# Print the Venn diagram
+print(venn)
+dev.copy(jpeg,filename="path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES/DE_genes_T0_T1.jpg");
+dev.off ();
 
+# PROMOTERS
 
+ data<-readr::read_tsv("report.pr_matrix.tsv")
+ data$Protein.Group%>% duplicated() %>% any()
+ colnames(data)[1]='UNIPROT'
+ data_ = AnnotationDbi::select(org.Hs.eg.db, keys = data$UNIPROT, columns = "ENTREZID", keytype = "UNIPROT")
+ data_new <- merge(data_, data, by = "UNIPROT", all = TRUE)
+ data_unique <- make_unique(data_new, "ENTREZID", "UNIPROT", delim = ";")
+ d_columns <- 7:60
+ data_se <- make_se(data_unique, d_columns, meta)
+ 
+ dat=data[6:59]
+ rownames(dat)=data$Genes
 
+output_dir="/path/HEATSTROKE/Proteomics_C_data/Results Overall/GENES"
+dat.log <- process_proteomics_data(dat, meta, output_dir)
 
+# PCA Plots
+plot_pca(dat.log, gs, "Disease (PC1 vs PC2)", file.path(output_dir, "PCA_Promoters_PC1_PC2_Disease.jpg"))
+plot_pca(dat.log, age, "Age (PC2 vs PC3)", file.path(age_dir, "PCA_Promoters_PC2_PC3_Age.jpg"))
+plot_pca(dat.log, gender, "Gender (PC1 vs PC2)", file.path(gender_dir, "PCA_Promoters_PC1_PC2_Gender.jpg"))
 
+# Run the analysis for each comparison
+stress_t0 <- analyze_DE("Stress-T0", "Stress-T0", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_Stress_T0.csv", "Promoters: Control vs. Heat stroke T0")
+stress_t1 <- analyze_DE("Stress-T1", "Stress-T1", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_Stress_T1.csv", "Promoters: Control vs. Heat stroke T1")
+t0_t1 <- analyze_DE("T0-T1", "T0-T1", "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_T0_T1.csv", "Promoters: Heat stroke T0 vs. Heat stroke T1")
 
-
-
-
-
-
-
-
+# Perform enrichment analysis for each comparison
+ego_stress_t0 <- perform_enrichment(stress_t0, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_Stress_T0.csv", "Gene Enrichment: Stress vs. T0")
+ego_stress_t1 <- perform_enrichment(stress_t1, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_Stress_T1.csv", "Gene Enrichment: Stress vs. T1")
+ego_t0_t1 <- perform_enrichment(t0_t1, "/path/HEATSTROKE/Proteomics_C_data/Results Overall/Promoters/DE_Promoters_T0_T1.csv", "Gene Enrichment: T0 vs. T1")
+ 
+# t-SNE
+tsne(dat.log,labels=as.factor(rownames(dat.log)))
 
