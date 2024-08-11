@@ -32,7 +32,8 @@ library("bladderbatch")
 library(nortest)
 
 #Set path where the files are located
-setwd("/Users/mariacastillo/Desktop/HEATSTROKE/DATA CEL FILES/ALL")
+path_transcriptomics="path/HEATSTROKE/DATA CEL FILES/"
+setwd(path_transcriptomics)
 
 SDRF <- read_excel("metadata.xlsx")
 celFiles <- SDRF$File.name
