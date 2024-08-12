@@ -1,4 +1,3 @@
-
 #Load libraries 
 library(affy)
 library(affycoretools)
@@ -244,14 +243,14 @@ analyze_contrast <- function(design, contrast, filename_prefix) {
   write.csv(gene_list, paste0(filename_prefix, "_gene_list.csv"))
   
   # Compare with reference genes
-  Ref <- read_excel("Heat_stroke_genes.xlsx")
-  merged_table <- merge(Ref, top_genes_mean_table, by = "SYMBOL")
-  write.csv(merged_table, paste0(filename_prefix, "_shared_genes.csv"))
+  #Ref <- read_excel("Heat_stroke_genes.xlsx")
+  #merged_table <- merge(Ref, top_genes_mean_table, by = "SYMBOL")
+  #write.csv(merged_table, paste0(filename_prefix, "_shared_genes.csv"))
   
   # Plot volcano plot
   top_genes_mean_table$logFC <- as.numeric(unlist(top_genes_mean_table$logFC))
   top_genes_mean_table$adj.P.Val <- as.numeric(unlist(top_genes_mean_table$adj.P.Val))
-  EnhancedVolcano(top_genes_mean_table,
+  my_plot = EnhancedVolcano(top_genes_mean_table,
                   lab = top_genes_mean_table$SYMBOL,
                   x = 'logFC',
                   y = 'adj.P.Val',
@@ -259,15 +258,15 @@ analyze_contrast <- function(design, contrast, filename_prefix) {
                   pCutoff = 0.05,
                   FCcutoff = 1,
                   pointSize = 1.0)
-  dev.copy(jpeg, filename = paste0("Volcano_", filename_prefix, ".jpg"))
-  dev.off()
+
+  ggsave(paste0("Volcano_", filename_prefix, ".jpg"), plot = my_plot) 
   
   # Enrichment analysis
   OrgDb <- 'org.Hs.eg.db'
   ego <- enrichGO(gene_ids$ENTREZID, OrgDb, ont = "MF", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
-  barplot(ego, showCategory = 20)
-  dev.copy(jpeg, filename = paste0("Barplot_", filename_prefix, ".jpg"))
-  dev.off()
+  my_plot2= barplot(ego, showCategory = 20)
+
+  ggsave(paste0("Barplot_", filename_prefix, ".jpg"), plot = my_plot2) 
   
   return(top_genes_mean_table)
 }
